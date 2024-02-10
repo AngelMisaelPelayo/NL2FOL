@@ -1,5 +1,15 @@
+import re
 import nltk
+from copy import deepcopy
+import numpy as np
+from nltk.tree import Tree
+from itertools import product, combinations, permutations
+from utils import *
+import random
 from z3 import *
+from fuzzywuzzy import fuzz
+from FOL2tree import parse_text_FOL_to_tree
+
 def extract_variables(fol_str):
     variables = []
     for idx, char in enumerate(fol_str):
@@ -8,6 +18,17 @@ def extract_variables(fol_str):
             # Make sure there are no spaces between quantifiers and variables.
             variables.append(fol_str[idx + 1])
     return variables
+def CountArity(node):
+    pivote=node
+    #initially arity=1
+    arity=1
+    #if there is more than one term then terms has exactly 3 children (term , terms)
+    #any times it happens, that means we have another term, we update pivote for the new terms (pivote[2]) 
+    while(len(pivote)==3):
+        arity+=1
+        pivote=pivote[2]
+    return arity
+
 def formula(node,constants=None):
     if isinstance(node, str):  # Terminal node
         return node
@@ -46,6 +67,9 @@ def formula(node,constants=None):
         if len(children) == 3 and children[0] == '(' and children[2] == ')':
             # If the 'F' node is surrounded by parentheses, process the middle child.
             return formula(children[1])
+        if children[0] == '¬':
+            # If the 'F' starts with ¬, add Not and process.
+            return formula(f'(not {formula(children[2])})')
         elif len(children) == 1:
             # Single child, could be a negation, an atomic formula, or a nested 'F'
             return formula(children[0])
@@ -111,8 +135,8 @@ def formula(node,constants=None):
     else:
         raise ValueError(f'Unknown node type: {label}')
 
-def extract_predicates(node, variables):
-    predicates = {}
+def extract_predicates(premise, variables, DicPredicates):
+    node = parse_text_FOL_to_tree(premise)
     constants = set([])
     def traverse(node):
         if isinstance(node, str):
@@ -125,27 +149,42 @@ def extract_predicates(node, variables):
                 constants.add(node[0])
         if label == 'L':
             if len(node)==4:
-                # Extract predicate name
-                pred_name = children[0][0]
-
                 # Count arity based on the number of terms
                 terms_node = children[2]  # This is the 'TERMS' node
-                arity = (len(terms_node)+1)/2 #term1,term2,term3,... if it has len n then the terms are (n+1)/2
+                arity = CountArity(terms_node) #this function counts the arity
+                # Extract predicate name
+                pred_name = children[0][0]
+                #leveinsteing distance to know if we have a new predicate
+                new_word = replacement(pred_name, DicPredicates, arity)
+                #if there is no changes it is because we have a predicate different from the ones in set
+                if(new_word==pred_name):
+                    # Add to predicates dictionary
+                    DicPredicates[new_word] = arity
+                #otherwise, pred_name is the same but with wrong written
+                else:
+                    children[0][0]=new_word
+                
 
             elif len(node)==5:
-                pred_name = children[1][0]
-
                 # Count arity based on the number of terms
                 terms_node = children[3]  # This is the 'TERMS' node
-                arity = (len(terms_node)+1)/2
-            # Add to predicates dictionary
-            arity=int(arity)
-            predicates[pred_name] = arity
+                arity = CountArity(terms_node) #this function counts the arity
+                pred_name = children[1][0]
+                #leveinsteing distance to know if we have a new predicate
+                new_word = replacement(pred_name, DicPredicates, arity)
+                #if there is no changes it is because we have a predicate different from the ones in set
+                if(new_word==pred_name):
+                    # Add to predicates dictionary
+                    DicPredicates[new_word] = arity
+                #otherwise, pred_name is the same but with wrong written
+                else:
+                    children[1][0]=new_word
+
         for child in children:
             traverse(child)
 
     traverse(node)
-    return [predicates, constants]
+    return [constants, node]
 
 def generate_smtlib_declarations(predicates, constants):
     declarations = []
@@ -159,7 +198,15 @@ def generate_smtlib_declarations(predicates, constants):
         declarations.append(f"(declare-const {c} {type_signature} )")
     return '\n'.join(declarations)
 
-def fol_tree_to_smtlib(tree, variables):
+#this function recives the premise we will convert into a tree
+#variables to calculate the predicates of the premise
+#we will transform the tree predicates according to the DicPredicates
+#If a predicate in tree is 'similar' to someone from Dic we change for the one is in set
+#Then we update the Dic with the new predicates
+def fol_tree_to_smtlib(premise, variables, DicPredicates):
+    # Now smtlib_str holds the entire SMT-LIB formula string
+  constants, tree = extract_predicates(premise, variables, DicPredicates)
+  predicates= DicPredicates 
   if len(tree)>1:
     quant_part = tree[0]
     body_part = tree[1]
@@ -167,6 +214,7 @@ def fol_tree_to_smtlib(tree, variables):
     quantifier_str = formula(quant_part)
 
     # This will hold the body part of the SMT-LIB string
+
     body_str = formula(body_part)
 
     # Now construct the final SMT-LIB string
@@ -183,10 +231,75 @@ def fol_tree_to_smtlib(tree, variables):
     # This will hold the body part of the SMT-LIB string
     body_str = formula(body_part)
     smtlib_str = f'(assert {body_str})'
-
-
-  # Now smtlib_str holds the entire SMT-LIB formula string
-  predicates, constants = extract_predicates(tree, variables)
+  
   declarations = generate_smtlib_declarations(predicates, constants)
-
   return declarations+'\n'+smtlib_str
+
+# Function to create a mapping of words to predicates based on Levenshtein distance
+#def replacement(predicate, Setpredicates):
+#    replacement_dict = {}
+#    s=len(predicate)
+#    for pred in Setpredicates:
+#        l=len(pred)
+#        if ((l!=s) & (edit_dist(predicate, pred)<= 2)):
+#            predicate = pred 
+#            break
+#    return predicate
+def replacement(predicate, Dicpredicates,arity):
+    for pred, n in Dicpredicates.items():
+        partial_ratio = fuzz.partial_ratio(predicate, pred)
+        if ((partial_ratio >= 85) & (n==arity)):
+            predicate = pred
+            break
+    return predicate
+
+def check_fol_validity(premises, conclusion):
+    # Initialize the solver
+    solver = Solver()
+    DicPredicates={}
+    # Convert all premises to SMT-LIB and add to solver
+    for premise in premises:
+        #print(SetPredicates)
+        variables=extract_variables(premise)
+        premise_smtlib = fol_tree_to_smtlib(premise, variables,DicPredicates)
+        #print(premise_smtlib)
+        solver.add(parse_smt2_string(premise_smtlib))
+    solver.push()
+    # Parse the SMT-LIB string into a Z3 expression
+    # Convert conclusion to SMT-LIB
+    variables=extract_variables(conclusion)
+    conclusion_smtlib = fol_tree_to_smtlib(conclusion,variables,DicPredicates)
+    conclusionS = parse_smt2_string(conclusion_smtlib)
+    negated_conclusion=Not(conclusionS[0])
+    # Add the negation of the conclusion to the solver
+    solver.add(negated_conclusion)
+
+    # Check if the negated conclusion is unsatisfiable with the premises
+    if solver.check() == unsat:
+        return 'True'
+    else:
+        solver.pop()
+        solver.add(conclusionS[0])
+        if solver.check() == unsat:
+            return 'False'
+        else:
+            return 'Unknown'
+
+def balance_parentheses(input_str):
+    balanced = ""
+    left_count = 0
+    right_count = 0
+    # count
+    for char in input_str:
+        if char == '(':
+            left_count += 1
+        elif char == ')':
+            right_count += 1
+        #if there are more right_count then we do not add the parenthesis, otherwise we add the char
+        if left_count>=right_count:
+            balanced+=char
+    # At the end we check: if there are more left than right we add as many as needed
+    difference=left_count-right_count 
+    if difference>0:
+        balanced+=')'*difference
+    return balanced
