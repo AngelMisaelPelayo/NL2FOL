@@ -10,7 +10,6 @@ from itertools import product, combinations, permutations
 from typing import Optional, Union, List, Dict, Callable
 from utils import *
 import random
-from Levenshtein import distance as edit_dist
 
 
 # TODO inefficient
