@@ -1,6 +1,6 @@
 from z3 import * 
 from FOL2tree import parse_text_FOL_to_tree
-from Tree2SMT-LIB import fol_tree_to_smtlib, extract_variables
+from Tree2SMT_LIB import fol_tree_to_smtlib, extract_variables
 
 def check_fol_validity(premises, conclusion):
     # Initialize the solver
