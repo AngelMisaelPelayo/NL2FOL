@@ -47,7 +47,7 @@ def formula(node,constants=None):
             quant = children[0]
             var = children[1]
             # Start the quantifier string
-            quant_str = f'({quant} (({var} Int))'
+            quant_str = f'({quant} (({var} Bool))'
 
             # Check if there's a nested 'Q' node
             if len(node) == 3:
@@ -189,12 +189,12 @@ def extract_predicates(premise, variables, DicPredicates):
 def generate_smtlib_declarations(predicates, constants):
     declarations = []
     for pred_name, arity in predicates.items():
-        # Generate the type signature (Int ...) based on arity
-        type_signature = ' '.join(['Int' for _ in range(arity)])
+        # Generate the type signature (Bool ...) based on arity
+        type_signature = ' '.join(['Bool' for _ in range(arity)])
         declarations.append(f"(declare-fun {pred_name} ({type_signature}) Bool)")
     for c in constants:
-        # Generate the type signature (Int ...) based on arity
-        type_signature = 'Int'
+        # Generate the type signature (Bool ...) based on arity
+        type_signature = 'Bool'
         declarations.append(f"(declare-const {c} {type_signature} )")
     return '\n'.join(declarations)
 
