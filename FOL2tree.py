@@ -54,10 +54,39 @@ def parse_text_FOL_to_tree(rule_str):
 
 
 def reorder_quantifiers(rule_str):
-    matches = re.findall(r'[∃∀]\w', rule_str)
-    for match in matches[::-1]:
-        rule_str = '%s ' % match + rule_str.replace(match, '', 1)
-    return rule_str
+    pattern = re.compile(r'(¬?)([∃∀])(\w)')
+    counter = 0
+
+    # Original string without quantifiers and negations
+    original_str = rule_str
+    matches = list(re.finditer(pattern, rule_str))
+    for match in matches:
+        original_str = original_str.replace(match.group(0), "", 1)
+    
+    # List to hold transformed quantifiers
+    transformed_quantifiers = []
+
+    for match in matches:
+        negation, quantifier, variable = match.groups()
+        has_negation = negation == '¬'
+
+        # Logic for negation and quantifier transformation
+        if has_negation:
+            # Increment counter for negation
+            counter += 1
+        # Determine whether to switch the quantifier
+        if counter % 2 == 1 or has_negation:
+            quantifier = '∀' if quantifier == '∃' else '∃'
+
+        # Append transformed quantifier and variable
+        transformed_quantifiers.append(f'{quantifier}{variable}')
+
+    # Rebuild the formula with the transformed quantifiers
+    new_quantifiers_str = ' '.join(transformed_quantifiers)
+    # Adjust the final formula based on the counter's final value
+    final_formula = f'{new_quantifiers_str} ¬{original_str}' if counter % 2 == 1 else f'{new_quantifiers_str} {original_str}'
+
+    return final_formula.strip()
 
 
 def msplit(s):
